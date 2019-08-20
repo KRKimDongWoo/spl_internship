@@ -142,3 +142,176 @@ class Edge:
 
     def updated_dest(self, out_shape, expanded=[]):
         pass
+
+def add_noise(weight):
+    noise_range = np.ptp(weight.flatten()) * NOISE_RATIO
+    noise = np.random.uniform(-noise_range/2.0, noise_range/2.0, weight.shape)
+    return np.add(weight, noise)
+
+class FlattenEdge(Edge):
+    def __init__(self, src, dest):
+        super(FlattenEdge, self).__init__(src, dest, layer=Flatten, identical=False)
+
+    def updated_src(self, in_shape, expanded=[]):
+        total = 1
+        nf = in_shape[0]
+        for i in in_shape:
+            total = total * i
+        out_shape = (total,)
+        feature_size = total // nf
+
+        new_expanded = []
+        for o, c in expanded:
+            origin = range(o*feature_size, (o+1)*feature_size)
+            copied = range(c*feature_size, (c+1)*feature_size)
+            new_expanded.extend((o, c) for o, c in zip(origin, copied))
+
+        return out_shape, new_expanded
+
+class BatchNormEdge(Edge):
+
+    def __init__(self, src, dest, num_features):
+        self.args = {
+            'num_features': num_features,
+        }
+        super(BatchNormEdge, self).__init__(src,
+                                          dest,
+                                          layer=torch.nn.BatchNorm2d(**self.args),
+                                          identical=False)
+
+    def updated_src(self, in_shape, expanded=[]):
+
+        nf = in_shape[0]
+        extended_params = {
+            'weight': torch.Tensor(nf),
+            'bias': torch.Tensor(nf)
+        }
+
+        # Get original parameters.
+        params = dict((name, value.data) for (name, value) in self.layer.named_parameters())
+
+        # Expand original parameters
+        for key in params.keys():
+            extended_params[key][:len(params[key])] = params[key]
+            for o, c in expanded:
+                extended_params[key][c] = extended_params[key][o]
+            extended_params[key] = add_noise(extended_params[key]).float()
+
+        # Update argument
+        self.args['num_features'] = nf
+
+        # Update the layer
+        new_layer = torch.nn.BatchNorm2d(**self.args)
+        new_layer.weight.data = extended_params['weight']
+        new_layer.bias.data = extended_params['bias']
+        self.layer = new_layer
+
+        # Generate new output shape
+        out_shape = in_shape
+        return out_shape, expanded
+
+    def updated_dest(self, out_shape, expanded=[]):
+        return out_shape, expanded
+
+
+class ReluEdge(Edge):
+    def __init__(self, src, dest, num_features):
+        self.args = {
+        }
+        super(ReluEdge, self).__init__(src,
+                                       dest,
+                                       layer=torch.nn.ReLU(),
+                                       identical=False)
+
+    def updated_src(self, in_shape, expanded=[]):
+        return in_shape, expanded
+
+    def updated_dest(self, out_shape, expanded=[]):
+        return out_shape, expanded
+
+
+class PoolingEdge(Edge):
+    def __init__(self):
+        pass
+
+    def _set_args(self, kernel_size, stride, padding):
+        stride = kernel_size if stride == None else stride
+        stride = (stride, stride) if isinstance(stride, int) else stride
+        kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        padding = (padding, padding) if isinstance(padding, int) else padding
+
+        self.args = {
+            'kernel_size': kernel_size,
+            'stride': stride,
+            'padding': padding,
+            'ceil_mode': True
+        }
+
+    def updated_src(self, in_shape, expanded=[]):
+        if len(in_shape) != 3: raise Exception('Unsuitable input shape')
+
+        attr = zip(in_shape[1:],
+                   self.args['kernel_size'],
+                   self.args['stride'],
+                   self.args['padding'])
+        out_shape = (in_shape[0],) + tuple(self.calculate_output(x, ks, st, pd)
+                                           for x, ks, st, pd in attr)
+
+        return out_shape, expanded
+
+    def calculate_output(self, value, ks, st, pd):
+        return ceil((value + 2 * pd - ks) / st + 1)
+
+class MaxPoolingEdge(PoolingEdge):
+    def __init__(self, src, dest, kernel_size, stride=None, padding=0):
+        self._set_args(kernel_size=kernel_size, stride=stride, padding=padding)
+        super(PoolingEdge, self).__init__(src,
+                                          dest,
+                                          layer=torch.nn.MaxPool2d(**self.args),
+                                          identical=False)
+
+class AvgPoolingEdge(PoolingEdge):
+    def __init__(self, src, dest, kernel_size, stride=None, padding=0):
+        self._set_args(kernel_size=kernel_size, stride=stride, padding=padding)
+        super(PoolingEdge, self).__init__(src,
+                                          dest,
+                                          layer=torch.nn.AvgPool2d(**self.args),
+                                          identical=False)
+
+class LinearEdge(Edge):
+    def __init__(self, src, dest, in_features, out_features, bias=True):
+        self.args = {
+            'in_features': in_features,
+            'out_features': out_features,
+            'bias': bias
+        }
+        super(LinearEdge, self).__init__(src,
+                                         dest,
+                                         layer=torch.nn.Linear(**self.args),
+                                         identical=False)
+
+    def updated_src(self, in_shape, expanded=[]):
+        ni = in_shape[0]
+
+        # Get original parameters
+        params = dict((name, value.data) for (name, value) in self.layer.named_parameters())
+
+        # Expand original parameters
+        expanded_weight = torch.Tensor(self.args['out_features'], ni)
+        expanded_weight[:,:self.args['in_features']] = params['weight']
+        for o, c in expanded:
+            expanded_weight[:,c] = params['weight'][:,o]
+        expanded_weight = add_noise(expanded_weight).float()
+
+        # Update the args
+        self.args['in_features'] = ni
+
+        # Update the layer
+        new_layer = torch.nn.Linear(**self.args)
+        new_layer.weight.data = expanded_weight
+        new_layer.bias.data = params['bias']
+        self.layer = new_layer
+
+        # Generate new output shape
+        out_shape = (self.args['out_features'],)
+        return out_shape, []
