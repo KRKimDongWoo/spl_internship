@@ -29,7 +29,7 @@ def add_conv_layer(gr, src, dest=None, nf=None, ks=3, st=1, bias=True, identical
     ni = in_shape[0]
 
     # Get output shape
-    edge = ConvEdge(src, 0, ni, nf, ks, st, bias)
+    edge = ConvEdge(src, 0, ni, nf, ks, st, bias=bias)
     if identical: edge.set_identical()
     out_shape = edge.calculate_output(in_shape)
 
@@ -161,6 +161,22 @@ def add_adaptive_pooling_layer(gr, src, dest=None, target=None, method=None):
     gr.add_edge(edge)
     return dest
 
+def add_dropout_layer(gr, src, dest=None, p=0.2):
+
+    # Verify input
+    in_shape = gr.nodes[src].shape
+
+    # Get output shape
+    edge = DropoutEdge(src, 0, p=0.2)
+    out_shape = edge.calculate_output(in_shape)
+
+    # Verify output and set
+    dest = _verify_output(gr, dest, out_shape)
+    edge.dest = dest
+
+    gr.add_edge(edge)
+    return dest
+
 def add_id_layer(gr, src, dest=None):
 
     # Verify input
@@ -174,17 +190,18 @@ def add_id_layer(gr, src, dest=None):
     gr.add_edge(edge)
     return dest
 
-def add_conv_block(gr, src, dest=None, nf=None, ks=3, st=1, zero_bn=False, act=True):
+def add_conv_block(gr, src, dest=None, nf=None, ks=3, st=1, p=0.2, zero_bn=False, act=True):
 
     # Generate conv layer and get output shape
     conv_node = add_conv_layer(gr, src, None, nf, ks, st, bias=False)
+    do_node = add_dropout_layer(gr, conv_node, None, p=p)
 
     # Generate layer
     if act:
-        bn_node = add_bn_layer(gr, conv_node, None, zero_bn)
+        bn_node = add_bn_layer(gr, do_node, None, zero_bn)
         dest = add_relu_layer(gr, bn_node, dest)
     else:
-        dest = add_bn_layer(gr, conv_node, dest, zero_bn)
+        dest = add_bn_layer(gr, do_node, dest, zero_bn)
 
     return dest
 
