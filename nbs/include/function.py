@@ -4,6 +4,9 @@
 #################################################
 # file to edit: nb/function.ipynb
 from math import ceil
+import numpy as np
+from .constants import NEXT_CHANNEL
+
 
 def ceil_power_of_two(x):
     x = ceil(x) - 1
@@ -13,3 +16,20 @@ def ceil_power_of_two(x):
         res = res + 1
 
     return 2**(res)
+
+def next_channel(ni):
+    if ni in NEXT_CHANNEL:
+        return NEXT_CHANNEL[ni]
+    else:
+        for key in NEXT_CHANNEL.keys():
+            next = NEXT_CHANNEL[key]
+            if key <= ni and ni < next:
+                return next
+        return ni
+
+def rand_bool(p=0.5):
+  return np.random.choice([True, False], p=[p, 1-p])
+
+def rand_geo(p):
+  return np.random.geometric(p=p)
+

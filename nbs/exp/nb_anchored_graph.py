@@ -6,14 +6,14 @@
 import torch
 from .graph.graph import Graph
 from .graph_transformer import *
-from .function import ceil_power_of_two
+from .function import ceil_power_of_two, next_channel
 
 class AnchorGraph(Graph):
     def __init__(self, input_shape, output_shape):
         super(AnchorGraph, self).__init__(input_shape, output_shape)
         category = output_shape[0]
 
-        self.anchor = []
+        self.anchor = {}
         self.convs = []
 
         next = add_conv_block(self, self.input, nf=64, ks=3, st=2)
@@ -87,7 +87,8 @@ class AnchorGraph(Graph):
 
     def add_anchor(self, src, layer):
         anchor = self.insert_node(src, multi_input=True, layer=layer)
-        self.anchor.append(anchor)
+        anchor_node = self.nodes[anchor]
+        self.anchor[anchor_node.rank] = anchor
         return anchor
 
     def add_connection(self, src, dest, layer_features=[]):
@@ -130,11 +131,15 @@ class AnchorGraph(Graph):
         return dest
 
     def deeper_net(self, layer):
-        last_anchor = self.anchor[-1]
-        ni = self.nodes[last_anchor].shape[0]
+        last_anchor = sorted(self.anchor.items())[-1][1]
+        in_shape = self.nodes[last_anchor].shape
+        ni = in_shape[0]
 
         next = last_anchor
-        if ni > 512: next = self.insert_node(next, edge=AvgPoolingEdge(0, 0, kernel_size=2))
+        if ni > 512:
+            edge = AvgPoolingEdge(0, 0, kernel_size=2)
+            next_shape = edge.calculate_output(in_shape)
+            next = self.insert_node(next, shape=next_shape, edge=edge)
 
         self.add_anchor(next, layer=layer)
         edge = ConvEdge(0, 0, in_channels=ni, out_channels=ni, kernel_size=3, bias=False)
@@ -166,5 +171,20 @@ class AnchorGraph(Graph):
 
         self.nodes[node].shape = (channel, ) + shape[1:]
         self._reconstruct(node, expanded)
-
         return
+
+    def save(self, dir_name):
+        graph_data={
+            'anchor': self.anchor,
+            'convs': self.convs
+        }
+        super().save(dir_name, graph_data=graph_data)
+
+    def load(self, dir_name):
+        graph_data, weight_data, key_to_id = super().load(dir_name)
+        anchors = graph_data['anchor']
+        convs = graph_data['convs']
+
+        self.anchor = dict([(k, key_to_id[i]) for k, i in anchors.items()])
+        self.convs = [key_to_id[k] for k in convs]
+        return graph_data, weight_data, key_to_id

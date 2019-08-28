@@ -9,7 +9,7 @@ from ..layer import Flatten
 from ..function import ceil_power_of_two
 from ..constants import NOISE_RATIO, COPY_RATIO
 import numpy as np
-from math import ceil, isnan
+from math import ceil
 
 class Edge:
     def __init__(self, src, dest, layer=None, identical=False):
@@ -21,9 +21,6 @@ class Edge:
 
     def as_layer(self):
         return self.layer
-
-    def set_weight(self, **kwargs):
-        return
 
     def updated_src(self, in_shape, out_shape, expanded=[]):
         return out_shape, expanded
@@ -43,13 +40,14 @@ class Edge:
                 if e != o: return False
         return True
 
-    @property
-    def edge_args(self):
-        return {'src': self.src, 'dest': self.dest, **(self.layer_args)}
+    def set_weight(self, **kwargs):
+        return
 
     @property
-    def layer_args(self):
-        return {'layer': self.layer_name, 'args': self.args}
+    def edge_args(self):
+        return {'src': self.src, 'dest': self.dest,
+                'layer': self.layer_name,
+                'args': self.args}
 
     @property
     def layer_name(self):
@@ -61,7 +59,7 @@ def add_noise(weight):
     return np.add(weight, noise).float()
 
 class FlattenEdge(Edge):
-    def __init__(self, src, dest):
+    def __init__(self, src, dest, **kwargs):
         self.args = {}
         super(FlattenEdge, self).__init__(src, dest, layer=Flatten(), identical=False)
 
@@ -94,7 +92,7 @@ class FlattenEdge(Edge):
 
 class BatchNormEdge(Edge):
 
-    def __init__(self, src, dest, num_features):
+    def __init__(self, src, dest, num_features, **kwargs):
         self.args = {
             'num_features': num_features,
         }
@@ -116,6 +114,7 @@ class BatchNormEdge(Edge):
     def set_weight(self, **kwargs):
         self.layer.bias.data = kwargs['bias']
         self.layer.weight.data = kwargs['weight']
+        return
 
     def updated_src(self, in_shape, out_shape, expanded=[]):
 
@@ -169,7 +168,7 @@ class BatchNormEdge(Edge):
                 if o < 0:
                     extended_params[key][c].fill_(0.)
                 else:
-                    extended_params[key][c] = extended_params[key][o]
+                    extended_params[key][c] = params[key][o]
             extended_params[key] = add_noise(extended_params[key])
 
         # Update argument
@@ -194,8 +193,9 @@ class BatchNormEdge(Edge):
         return 'batchnorm'
 
 class ReluEdge(Edge):
-    def __init__(self, src, dest):
-        self.args = {}
+    def __init__(self, src, dest, **kwargs):
+        self.args = {
+        }
         super(ReluEdge, self).__init__(src,
                                        dest,
                                        layer=nn.ReLU(),
@@ -215,14 +215,10 @@ class PoolingEdge(Edge):
     def _get_layer(self):
         pass
 
-    def __init__(self, src, dest, kernel_size, stride=None, padding=None, ceil_mode=True):
+    def __init__(self, src, dest, kernel_size, **kwargs):
         kernel_size = (kernel_size,) * 2 if isinstance(kernel_size, int) else kernel_size
-
-        if stride == None: stride = kernel_size
-        stride = (stride,) * 2 if isinstance(stride, int) else stride
-
-        if padding == None: padding = (0,) * 2
-        padding = (padding,) * 2 if isinstance(padding, int) else padding
+        stride = kernel_size
+        padding = (0,) * 2
 
         self.args = {
             'kernel_size': kernel_size,
@@ -267,7 +263,6 @@ class PoolingEdge(Edge):
         out_shape = nf + ch
         return out_shape
 
-
 class MaxPoolingEdge(PoolingEdge):
     def _get_layer(self):
         return nn.MaxPool2d
@@ -285,7 +280,7 @@ class AvgPoolingEdge(PoolingEdge):
         return 'avgpooling'
 
 class AdaptivePoolingEdge(Edge):
-    def __init__(self, src, dest, output_size):
+    def __init__(self, src, dest, output_size, **kwargs):
         pass
 
     def _set_args(self, output_size):
@@ -309,7 +304,6 @@ class AdaptiveMaxPoolingEdge(AdaptivePoolingEdge):
                                                   dest,
                                                   layer=nn.AdaptiveMaxPool2d(**self.args),
                                                   identical=False)
-
     @property
     def layer_name(self):
         return 'adaptivemaxpooling'
@@ -321,13 +315,12 @@ class AdaptiveAvgPoolingEdge(AdaptivePoolingEdge):
                                                   dest,
                                                   layer=nn.AdaptiveAvgPool2d(**self.args),
                                                   identical=False)
-
     @property
     def layer_name(self):
         return 'adaptiveavgpooling'
 
 class LinearEdge(Edge):
-    def __init__(self, src, dest, in_features, out_features, bias=True):
+    def __init__(self, src, dest, in_features, out_features, bias=True, **kwargs):
         self.args = {
             'in_features': in_features,
             'out_features': out_features,
@@ -351,11 +344,10 @@ class LinearEdge(Edge):
 
         self.layer.weight.data = add_noise(self.layer.weight.data)
 
-
     def set_weight(self, **kwargs):
         if self.args['bias']: self.layer.bias.data = kwargs['bias']
         self.layer.weight.data = kwargs['weight']
-
+        return
 
     def updated_src(self, in_shape, out_shape, expanded=[]):
         ni = in_shape[0]
@@ -386,7 +378,7 @@ class LinearEdge(Edge):
         out_shape = self.calculate_output(in_shape)
         return out_shape, []
 
-    def updated_dest(self, out_shape):
+    def updated_dest(self, in_shape, out_shape, expanded=[]):
         raise Excpetion('unimplemented')
 
     def calculate_output(self, in_shape):
@@ -398,12 +390,10 @@ class LinearEdge(Edge):
         return 'linear'
 
 class ConvEdge(Edge):
-    def __init__(self, src, dest, in_channels, out_channels, kernel_size,
-                 stride=1, padding=None, bias=True):
+    def __init__(self, src, dest,
+                 in_channels, out_channels, kernel_size, stride=1, bias=True, **kwargs):
         kernel_size = (kernel_size,) * 2 if isinstance(kernel_size, int) else kernel_size
-
-        if padding == None: padding = tuple(ks//2 for ks in kernel_size)
-        padding = (padding,) * 2 if isinstance(padding, int) else padding
+        padding = tuple(ks//2 for ks in kernel_size)
         stride = (stride,) * 2 if isinstance(stride, int) else stride
 
         self.args = {
@@ -433,14 +423,14 @@ class ConvEdge(Edge):
 
         self.layer.weight.data = add_noise(self.layer.weight.data)
 
-
     def set_weight(self, **kwargs):
         if self.args['bias']: self.layer.bias.data = kwargs['bias']
         self.layer.weight.data = kwargs['weight']
+        return
 
     def updated_src(self, in_shape, out_shape, expanded=[]):
-        prev_ni = self.args['in_channels']
         ni = in_shape[0]
+        prev_ni = self.args['in_channels']
         nf = self.args['out_channels']
 
         # Update the args
@@ -507,7 +497,7 @@ class ConvEdge(Edge):
                 else:
                     expanded_params[key][c, ...] = params[key][o, ...] * COPY_RATIO
                     expanded_params[key][o, ...] = params[key][o, ...] * (1 - COPY_RATIO)
-            add_noise(expanded_params[key])
+            expanded_params[key] = add_noise(expanded_params[key])
 
         # Update the layer
         new_layer = nn.Conv2d(**self.args)
@@ -555,7 +545,7 @@ class DropoutEdge(Edge):
         return 'dropout'
 
 class IdenticalEdge(Edge):
-    def __init__(self, src, dest):
+    def __init__(self, src, dest, **kwargs):
         self.args = {}
         super(IdenticalEdge, self).__init__(src,
                                             dest,

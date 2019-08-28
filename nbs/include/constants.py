@@ -1,0 +1,20 @@
+NEXT_CHANNEL = {
+  1: 16,
+  16: 32,
+  32: 48,
+  48: 64,
+  64: 96,
+  96: 128,
+  128: 192,
+  192: 256,
+  256: 384,
+  384: 512
+}
+
+NOISE_RATIO = 1e-4
+COPY_RATIO = 1e-1
+
+WIDER_ADJUST = 64
+SKIP_FEATURE = 32
+SKIP_PROB = 0.2
+SKIP_DECAY = 0.8
