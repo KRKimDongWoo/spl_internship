@@ -1,0 +1,2 @@
+NOISE_RATIO = 1e-4
+COPY_RATIO = 1e-1
