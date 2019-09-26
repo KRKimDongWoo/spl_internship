@@ -34,4 +34,5 @@ def test_add_edges():
   
   for i in range(9):
     for j in range(i):
-      gr.add_edge(j, i, 10*j+i)
+      eid = gr.add_edge(10*j+i)
+      gr.redirect_edge(eid, j, i)
